@@ -2,6 +2,10 @@
 
 Build a dbt project analyzing global airport data on Snowflake.
 
+The checked-in profile currently uses a local DuckDB database
+(`airstats/airstats.duckdb`) rather than Snowflake. The original assignment
+instructions below describe Snowflake; the recorded results use DuckDB.
+
 ---
 
 ## Getting Started
@@ -250,21 +254,56 @@ Create a `silver_airport_comments` model:
 ### Exercise 8: Update record
 Add a new record to `RAW.airport_comments`. Then materialize the incremental model again (but only that model).
 
-Add your solution in the next lines:
-* Adding a new record:
-  ```
-  REPLACE THIS CODE BLOCK BY PASTING THE SQL for adding a new record to `RAW.airport_comments`
-  ```
-* Command to execute to update this model (but only this model, not all the models):
-  ```
-  REPLACE THIS CODE BLOCK BY PASTING THE dbt COMMAND YOU EXECUTED
-  ``` 
-* Execute an SQL on the Snowflake UI to ensure the new record has been added:
-  ```
-  REPLACE THIS CODE BLOCK BY PASTING 
-  1) THE SQL to extract the new record from `silver_airport_comments`
-  2) THE result you see in Snowflake
-  ``` 
+**Adding a new record:**
+
+```sql
+INSERT INTO RAW.airport_comments
+    (id, thread_ref, airport_ref, airport_ident, date, member_nickname, subject, body)
+SELECT
+    GREATEST(
+        COALESCE((SELECT MAX(id) FROM RAW.airport_comments), 0),
+        COALESCE((SELECT MAX(comment_id) FROM DEV.silver_airport_comments), 0)
+    ) + 1,
+    82704,
+    39824,
+    'CA-0178',
+    CURRENT_TIMESTAMP,
+    'dbt_user',
+    'New airport comment',
+    'This is a new comment for the airport.';
+```
+
+**Update only the incremental model** (from the `airstats` directory):
+
+```sh
+dbt run --profiles-dir . --select silver_airport_comments
+```
+
+**Verify the inserted record:**
+
+```sql
+SELECT
+    comment_id,
+    airport_ident,
+    comment_timestamp,
+    member_nickname,
+    comment_subject,
+    comment_body,
+    loaded_at
+FROM airstats.dev.silver_airport_comments
+WHERE comment_id = 602622;
+```
+
+Recorded result from DuckDB:
+
+| comment_id | airport_ident | comment_timestamp | member_nickname | comment_subject | comment_body | loaded_at |
+|---|---|---|---|---|---|---|
+| 602622 | CA-0178 | 2026-11-23 16:28:38.511374 | dbt_user | New airport comment | This is a new comment for the airport. | 2026-11-23 16:29:37.629095-06 |
+
+The inserted ID is generated from the current maximum; use the ID produced by
+your insert when repeating the verification. The incremental model only picks
+up IDs greater than its current maximum; it does not capture updates or
+late-arriving comments with lower IDs.
 
 **Requirements** 
 * Every table in the silver layer must be materialized as a table by default through instructions in `dbt_project.yml`
@@ -279,18 +318,42 @@ Add your solution in the next lines:
 
 The airport `Los Angeles County Sheriff's Department Heliport` (airport_ident: `01CN`) must be closed. Simulate this change by updating the `type` column of this heliport to `closed` in `RAW.AIRPORTS`, then run `dbt run --select silver_airports` followed by `dbt snapshot`.
 
-* Updating the record to "closed":
-  ```
-  REPLACE THIS BLOCK BY PASTING THE SQL you executed
-  ```
-* Command to execute and snapshot update:
-  ```
-  REPLACE THIS CODE BLOCK BY PASTING THE dbt COMMAND YOU EXECUTED
-  ``` 
+Run the initial snapshot before updating the airport so the original version is
+preserved.
+
+**Updating the record to "closed":**
+
+```sql
+UPDATE raw.airports
+SET type = 'closed'
+WHERE ident = '01CN';
+```
+
+**Update the model and snapshots** (from the `airstats` directory):
+
+```sh
+dbt run --profiles-dir . --select silver_airports
+dbt snapshot --profiles-dir .
+```
 
 #### Analyses
 * Create `analyses/la_heliport_closed.sql` where you validate if the snapshot went through - select every line corresponding to this airport in the snapshot table.
 * Execute the analysis and print the values to screen
+
+For the configured local DuckDB profile, compile the analysis and execute the
+compiled SQL from the `airstats` directory:
+
+```powershell
+dbt compile --profiles-dir . --select la_heliport_closed
+duckdb -readonly airstats.duckdb -c ".read 'target\compiled\airstats\analyses\la_heliport_closed.sql'"
+```
+
+The recorded snapshot history contains these versions:
+
+| airport_ident | airport_type | dbt_valid_from | dbt_valid_to |
+|---|---|---|---|
+| 01CN | heliport | 2026-11-24 09:24:57.525401 | 2026-11-24 09:35:23.552522 |
+| 01CN | closed | 2026-11-24 09:35:23.552522 | NULL |
 
 ### Exercise 10: Snapshot on silver_runways
 * Create a snapshot for `silver_runways`, call it `scd_silver_runways`. Use the same check strategy as for `scd_silver_airports`.
@@ -305,8 +368,23 @@ Implement the following:
 * Implement two singular tests
 * Add configuration to store test failures into a database table
 
+Install the declared package and run the tests from `airstats`:
+
+```sh
+dbt deps --profiles-dir .
+dbt test --profiles-dir .
+```
+
+Relationship tests warn rather than fail when source records reference missing
+airports. In the current dataset, 1,367 comment records reference missing
+airports. Test failure tables are stored in the target's `dev_dbt_test__audit`
+schema with the local profile.
 
 ## Part 9: Documentation
 * Add descriptions to the silver tables and their columns
 * Use a '{{ doc("...") }}'-based documentation at least once
 * Create an overview.md where you discuss in a few sentences how the silver tables interconnect
+
+The model and column descriptions are in `models/silver/schema.yml`; the
+`silver_airports` description uses `models/silver/overview.md`. Generate the
+documentation from `airstats` with `dbt docs generate --profiles-dir .`.
