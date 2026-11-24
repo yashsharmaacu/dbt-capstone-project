@@ -217,4 +217,14 @@ dbt_internal_packages/
 package-lock.yml
 logs/
 
-/airstats
+
+.idea/airstats-capstone.iml
+.idea/modules.xml
+.idea/.gitignore
+.idea/vcs.xml
+.idea/workspace.xml
+.idea/inspectionProfiles/profiles_settings.xml
+.idea/inspectionProfiles/Project_Default.xml
+DB_CREATION_SCRIPTS.sql
+.gitignore
+
